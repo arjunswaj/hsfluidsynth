@@ -11,7 +11,7 @@ module Sound.Fluidsynth.Internal where
 #ccall fluid_settings_get_type , Ptr <fluid_settings_t> -> CString -> IO CInt
 #ccall fluid_settings_setstr , Ptr <fluid_settings_t> -> CString \
                             -> CString -> IO CInt
-#ccall fluid_settings_getstr , Ptr <fluid_settings_t> -> CString \
+#ccall fluid_settings_dupstr , Ptr <fluid_settings_t> -> CString \
                             -> Ptr CString -> IO CInt
 #ccall fluid_settings_setnum , Ptr <fluid_settings_t> -> CString \
                             -> CDouble -> IO CInt
@@ -90,7 +90,7 @@ module Sound.Fluidsynth.Internal where
           FunPtr (CUInt -> Ptr <fluid_event_t> -> Ptr <fluid_sequencer_t> \
                -> Ptr () -> IO ())
 
-#ccall new_fluid_sequencer , IO (Ptr <fluid_sequencer_t>)
+#ccall new_fluid_sequencer2 , CInt -> IO (Ptr <fluid_sequencer_t>)
 #ccall delete_fluid_sequencer , Ptr <fluid_sequencer_t> -> IO ()
 #ccall fluid_sequencer_register_client , Ptr <fluid_sequencer_t> -> CString \
                                       -> Ptr <fluid_event_callback_t> \

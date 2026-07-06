@@ -40,7 +40,7 @@ import qualified Data.Map as M
 import Data.Maybe
 import Foreign.C.String
 import Foreign.C.Types
-import Foreign.ForeignPtr.Safe
+import Foreign.ForeignPtr
 import Foreign.Ptr
 import System.Directory
 
