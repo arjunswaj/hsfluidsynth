@@ -66,10 +66,6 @@ newSettings :: IO Settings
 newSettings = do
     ptr <- c'new_fluid_settings
     settings <- newForeignPtr p'delete_fluid_settings ptr
-    withForeignPtr settings $ \ptr' ->
-        withCAString "audio.driver" $ \cstr ->
-            withCAString "alsa" $ \cstr' ->
-                void $ c'fluid_settings_setstr ptr' cstr cstr'
     return $! Settings settings
 
 newSynth :: Settings -> IO Synth
