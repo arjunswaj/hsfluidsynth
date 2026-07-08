@@ -30,6 +30,9 @@ module Sound.Fluidsynth
     ,playerJoin
     ,synthNoteOn
     ,synthNoteOff
+    ,synthWriteS16
+    ,synthProgramChange
+    ,synthBankSelect
     ,Event()
     ,eventNoteOn
     ,eventNoteOff)
@@ -134,6 +137,21 @@ synthNoteOff :: Synth -> Channel -> Key -> IO ()
 synthNoteOff (Synth _ _ synth) c k =
     withForeignPtr synth $ \ptr ->
         void $ c'fluid_synth_noteoff ptr (fromIntegral c) (fromIntegral k)
+
+synthWriteS16 :: Synth -> Ptr CShort -> Int -> IO ()
+synthWriteS16 (Synth _ _ synth) buf nframes =
+    withForeignPtr synth $ \ptr ->
+        void $ c'fluid_synth_write_s16 ptr (fromIntegral nframes) (castPtr buf) 0 2 (castPtr buf) 1 2
+
+synthProgramChange :: Synth -> Channel -> Program -> IO ()
+synthProgramChange (Synth _ _ synth) c p =
+    void $ withForeignPtr synth $ \ptr ->
+        c'fluid_synth_program_change ptr (fromIntegral c) (fromIntegral p)
+
+synthBankSelect :: Synth -> Channel -> Int -> IO ()
+synthBankSelect (Synth _ _ synth) c b =
+    void $ withForeignPtr synth $ \ptr ->
+        c'fluid_synth_bank_select ptr (fromIntegral c) (fromIntegral b)
 
 playerAdd :: Player -> String -> IO ()
 playerAdd (Player player) path = do

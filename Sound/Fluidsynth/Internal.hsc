@@ -46,6 +46,7 @@ module Sound.Fluidsynth.Internal where
 #ccall fluid_synth_sfload , Ptr <fluid_synth_t> -> CString -> CInt -> IO CInt
 #ccall fluid_synth_sfreload , Ptr <fluid_synth_t> -> CUInt -> IO CInt
 #ccall fluid_synth_sfunload , Ptr <fluid_synth_t> -> CUInt -> CInt -> IO CInt
+#ccall fluid_synth_write_s16 , Ptr <fluid_synth_t> -> CInt -> Ptr () -> CInt -> CInt -> Ptr () -> CInt -> CInt -> IO CInt
 
 #opaque_t fluid_audio_driver_t
 
