@@ -30,6 +30,8 @@ module Sound.Fluidsynth.Internal where
 
 #opaque_t fluid_synth_t
 
+#opaque_t fluid_sfont_t
+
 #ccall new_fluid_synth , Ptr <fluid_settings_t> -> IO (Ptr <fluid_synth_t>)
 #ccall delete_fluid_synth , Ptr <fluid_synth_t> -> IO ()
 #ccall fluid_synth_noteon , Ptr <fluid_synth_t> -> CInt -> CInt -> CInt \
@@ -46,7 +48,12 @@ module Sound.Fluidsynth.Internal where
 #ccall fluid_synth_sfload , Ptr <fluid_synth_t> -> CString -> CInt -> IO CInt
 #ccall fluid_synth_sfreload , Ptr <fluid_synth_t> -> CUInt -> IO CInt
 #ccall fluid_synth_sfunload , Ptr <fluid_synth_t> -> CUInt -> CInt -> IO CInt
+#ccall fluid_synth_program_select , Ptr <fluid_synth_t> -> CInt -> Ptr <fluid_sfont_t> -> CInt -> CInt -> IO CInt
+#ccall fluid_synth_system_reset , Ptr <fluid_synth_t> -> IO CInt
+#ccall fluid_synth_get_sfont_by_id , Ptr <fluid_synth_t> -> CInt -> IO (Ptr <fluid_sfont_t>)
+#ccall fluid_synth_error , Ptr <fluid_synth_t> -> IO CString
 #ccall fluid_synth_write_s16 , Ptr <fluid_synth_t> -> CInt -> Ptr () -> CInt -> CInt -> Ptr () -> CInt -> CInt -> IO CInt
+#ccall fluid_synth_write_float , Ptr <fluid_synth_t> -> CInt -> Ptr CFloat -> CInt -> CInt -> Ptr CFloat -> CInt -> CInt -> IO CInt
 
 #opaque_t fluid_audio_driver_t
 
@@ -63,6 +70,13 @@ module Sound.Fluidsynth.Internal where
 #ccall fluid_player_play , Ptr <fluid_player_t> -> IO CInt
 #ccall fluid_player_stop , Ptr <fluid_player_t> -> IO CInt
 #ccall fluid_player_join , Ptr <fluid_player_t> -> IO CInt
+#ccall fluid_player_get_status , Ptr <fluid_player_t> -> IO CInt
+#ccall fluid_player_seek , Ptr <fluid_player_t> -> CInt -> IO CInt
+
+#num FLUID_PLAYER_READY
+#num FLUID_PLAYER_PLAYING
+#num FLUID_PLAYER_STOPPING
+#num FLUID_PLAYER_DONE
 
 #opaque_t fluid_event_t
 
@@ -115,4 +129,25 @@ module Sound.Fluidsynth.Internal where
 #ccall fluid_sequencer_get_time_scale , Ptr <fluid_sequencer_t> -> IO CDouble
 
 #ccall fluid_sequencer_register_fluidsynth , Ptr <fluid_sequencer_t> \
-                                          -> Ptr <fluid_synth_t> -> IO CShort
+                                            -> Ptr <fluid_synth_t> -> IO CShort
+
+-- Log level constants
+#num FLUID_PANIC
+#num FLUID_ERR
+#num FLUID_WARN
+#num FLUID_INFO
+#num FLUID_DBG
+
+-- Log callback type (typedef void (*fluid_log_function_t)(int level, char *message, void *data))
+#callback fluid_log_function_t , \
+          FunPtr (CInt -> CString -> Ptr () -> IO ())
+
+-- Bindings
+#ccall fluid_set_log_function , CInt -> Ptr <fluid_log_function_t> -> Ptr () -> IO (Ptr <fluid_log_function_t>)
+#ccall fluid_default_log_function , CInt -> CString -> Ptr () -> IO ()
+
+#opaque_t fluid_file_renderer_t
+
+#ccall new_fluid_file_renderer , Ptr <fluid_synth_t> -> IO (Ptr <fluid_file_renderer_t>)
+#ccall delete_fluid_file_renderer , Ptr <fluid_file_renderer_t> -> IO ()
+#ccall fluid_file_renderer_process_block , Ptr <fluid_file_renderer_t> -> IO CInt

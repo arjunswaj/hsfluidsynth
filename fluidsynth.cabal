@@ -17,13 +17,189 @@ source-repository head
   type:                git
   location:            https://github.com/MostAwesomeDude/hsfluidsynth.git
 
+executable render-midi-example
+  main-is:             RenderMidiExample.hs
+  hs-source-dirs:      examples
+  build-depends:       base >= 4.17 && < 5
+                     , fluidsynth
+                     , bytestring >= 0.10 && < 0.13
+                     , vector >= 0.12 && < 0.14
+  pkgconfig-depends:   fluidsynth
+  default-extensions:  ForeignFunctionInterface
+  default-language:    Haskell2010
+
 library
   exposed-modules:     Sound.Fluidsynth
-  other-modules:       Sound.Fluidsynth.Internal
+                       Sound.Fluidsynth.Internal
   build-depends:       base >= 4.17 && < 5
                      , bindings-DSL >= 1.0.6 && < 1.1
                      , containers >= 0.5 && < 0.8
                      , directory >= 1.3 && < 1.4
+                     , vector >= 0.12 && < 0.14
   pkgconfig-depends:    fluidsynth
   default-extensions:  ForeignFunctionInterface
+  default-language:    Haskell2010
+
+test-suite SettingsSpec
+  type:                exitcode-stdio-1.0
+  main-is:             SettingsSpec.hs
+  hs-source-dirs:      test
+  build-depends:       base >= 4.17 && < 5
+                     , fluidsynth
+                     , tasty
+                     , tasty-hunit
+  pkgconfig-depends:   fluidsynth
+  default-extensions:  ForeignFunctionInterface
+                         , ScopedTypeVariables
+  default-language:    Haskell2010
+
+test-suite SynthSpec
+  type:                exitcode-stdio-1.0
+  main-is:             SynthSpec.hs
+  hs-source-dirs:      test
+  build-depends:       base >= 4.17 && < 5
+                     , fluidsynth
+                     , tasty
+                     , tasty-hunit
+  pkgconfig-depends:   fluidsynth
+  default-extensions:  ForeignFunctionInterface
+                         , ScopedTypeVariables
+  default-language:    Haskell2010
+
+test-suite PlayerSpec
+  type:                exitcode-stdio-1.0
+  main-is:             PlayerSpec.hs
+  hs-source-dirs:      test
+  build-depends:       base >= 4.17 && < 5
+                     , fluidsynth
+                     , tasty
+                     , tasty-hunit
+  pkgconfig-depends:   fluidsynth
+  default-extensions:  ForeignFunctionInterface
+                         , ScopedTypeVariables
+  default-language:    Haskell2010
+
+test-suite SynthWriteSpec
+  type:                exitcode-stdio-1.0
+  main-is:             SynthWriteSpec.hs
+  hs-source-dirs:      test
+  build-depends:       base >= 4.17 && < 5
+                     , fluidsynth
+                     , tasty
+                     , tasty-hunit
+                     , vector >= 0.12 && < 0.14
+  pkgconfig-depends:   fluidsynth
+  default-extensions:  ForeignFunctionInterface
+                               , ScopedTypeVariables
+  default-language:    Haskell2010
+
+test-suite SynthWriteFloatSpec
+  type:                exitcode-stdio-1.0
+  main-is:             SynthWriteFloatSpec.hs
+  hs-source-dirs:      test
+  build-depends:       base >= 4.17 && < 5
+                     , fluidsynth
+                     , tasty
+                     , tasty-hunit
+                     , vector >= 0.12 && < 0.14
+  pkgconfig-depends:   fluidsynth
+  default-extensions:  ForeignFunctionInterface
+                               , ScopedTypeVariables
+  default-language:    Haskell2010
+
+test-suite PCMBufferSpec
+  type:                exitcode-stdio-1.0
+  main-is:             PCMBufferSpec.hs
+  hs-source-dirs:      test
+  build-depends:       base >= 4.17 && < 5
+                     , fluidsynth
+                     , tasty
+                     , tasty-hunit
+                     , vector >= 0.12 && < 0.14
+  pkgconfig-depends:   fluidsynth
+  default-extensions:  ForeignFunctionInterface
+                               , ScopedTypeVariables
+  default-language:    Haskell2010
+
+test-suite RenderPCM
+  type:                exitcode-stdio-1.0
+  main-is:             RenderPCM.hs
+  hs-source-dirs:      test
+  build-depends:       base >= 4.17 && < 5
+                     , fluidsynth
+                     , tasty
+                     , tasty-hunit
+                     , vector >= 0.12 && < 0.14
+  pkgconfig-depends:   fluidsynth
+  default-extensions:  ForeignFunctionInterface
+                               , ScopedTypeVariables
+  default-language:    Haskell2010
+
+test-suite RenderMidi
+  type:                exitcode-stdio-1.0
+  main-is:             RenderMidi.hs
+  hs-source-dirs:      test
+  build-depends:       base >= 4.17 && < 5
+                     , fluidsynth
+                     , tasty
+                     , tasty-hunit
+                     , vector >= 0.12 && < 0.14
+  pkgconfig-depends:   fluidsynth
+  default-extensions:  ForeignFunctionInterface
+                                 , ScopedTypeVariables
+  default-language:    Haskell2010
+
+test-suite LoggingSpec
+  type:                exitcode-stdio-1.0
+  main-is:             LoggingSpec.hs
+  hs-source-dirs:      test
+  build-depends:       base >= 4.17 && < 5
+                     , fluidsynth
+                     , tasty
+                     , tasty-hunit
+  pkgconfig-depends:   fluidsynth
+  default-extensions:  ForeignFunctionInterface
+                                , ScopedTypeVariables
+  default-language:    Haskell2010
+
+test-suite FileRendererSpec
+  type:                exitcode-stdio-1.0
+  main-is:             FileRendererSpec.hs
+  hs-source-dirs:      test
+  build-depends:       base >= 4.17 && < 5
+                     , fluidsynth
+                     , tasty
+                     , tasty-hunit
+                     , directory >= 1.3 && < 1.4
+  pkgconfig-depends:   fluidsynth
+  default-extensions:  ForeignFunctionInterface
+                                 , ScopedTypeVariables
+  default-language:    Haskell2010
+
+test-suite ResourceSpec
+  type:                exitcode-stdio-1.0
+  main-is:             ResourceSpec.hs
+  hs-source-dirs:      test
+  build-depends:       base >= 4.17 && < 5
+                     , fluidsynth
+                     , tasty
+                     , tasty-hunit
+  pkgconfig-depends:   fluidsynth
+  default-extensions:  ForeignFunctionInterface
+                                 , ScopedTypeVariables
+  default-language:    Haskell2010
+
+test-suite IntegrationSpec
+  type:                exitcode-stdio-1.0
+  main-is:             IntegrationSpec.hs
+  hs-source-dirs:      test
+  build-depends:       base >= 4.17 && < 5
+                     , fluidsynth
+                     , tasty
+                     , tasty-hunit
+                     , directory >= 1.3 && < 1.4
+                     , vector >= 0.12 && < 0.14
+  pkgconfig-depends:   fluidsynth
+  default-extensions:  ForeignFunctionInterface
+                                 , ScopedTypeVariables
   default-language:    Haskell2010
