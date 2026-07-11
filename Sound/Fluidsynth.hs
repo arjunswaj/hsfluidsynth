@@ -1,4 +1,4 @@
-{-# LANGUAGE CPP #-}
+{-# LANGUAGE CPP                        #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 -- Copyright 2014 Google Inc. All rights reserved.
 --
@@ -75,25 +75,28 @@ module Sound.Fluidsynth
     ,withLogCallback)
 where
 
-import Control.Concurrent (threadDelay)
-import Control.Exception (bracket, finally)
-import Control.Monad
-import Data.Int (Int16)
-import qualified Data.Map as M
-import qualified Data.Vector.Storable as V
-import Foreign.C.String
-import Foreign.C.Types (CFloat, CInt(..), CShort, CUInt, CDouble)
-import Foreign.ForeignPtr
-import Foreign.Marshal.Alloc (alloca, free, finalizerFree, mallocBytes)
-import Foreign.Ptr
-import Foreign.Storable (peek, sizeOf)
-import System.Directory
-import System.IO.Error
+import           Control.Concurrent        (threadDelay)
+import           Control.Exception         (bracket, finally)
+import           Control.Monad
+import           Data.Int                  (Int16)
+import qualified Data.Map                  as M
+import qualified Data.Vector.Storable      as V
+import           Foreign.C.String
+import           Foreign.C.Types           (CDouble, CFloat, CInt (..), CShort,
+                                            CUInt)
+import           Foreign.ForeignPtr
+import           Foreign.Marshal.Alloc     (alloca, finalizerFree, free,
+                                            mallocBytes)
+import           Foreign.Ptr
+import           Foreign.Storable          (peek, sizeOf)
+import           System.Directory
+import           System.IO.Error
 
-import Sound.Fluidsynth.Internal
-import Data.IORef (IORef, newIORef, readIORef, writeIORef)
-import System.IO (stderr, hPutStrLn)
-import System.IO.Unsafe (unsafePerformIO)
+import           Data.IORef                (IORef, newIORef, readIORef,
+                                            writeIORef)
+import           Sound.Fluidsynth.Internal
+import           System.IO                 (hPutStrLn, stderr)
+import           System.IO.Unsafe          (unsafePerformIO)
 
 -- | Whether to register C finalizers for FluidSynth objects.
 -- On macOS, we skip cleanup to avoid a FluidSynth exit segfault
@@ -458,20 +461,23 @@ renderPCM synth nframes = do
 --
 -- Throws 'IOException' if the MIDI file cannot be loaded or the player fails.
 renderMidi :: Synth -> FilePath -> IO PCMBuffer
-renderMidi synth path = do
-    -- Check file existence early for a better error message
+renderMidi synth@(Synth _ _ synthFPtr) path = do
     exists <- doesFileExist path
     unless exists $
         ioError $ mkIOError doesNotExistErrorType
             ("renderMidi: MIDI file not found: " ++ path) Nothing Nothing
-    player <- newPlayer synth
+    -- Create player with no finalizer so we can delete it explicitly
+    playerFPtr <- withForeignPtr synthFPtr $ \ptr -> do
+        ptr' <- c'new_fluid_player ptr
+        newForeignPtr_ ptr'
+    let player = Player synth playerFPtr
     playerAdd player path
     playerPlay player
-    -- Give the player thread a moment to transition to Playing
     threadDelay 50000
     samples <- collectWhilePlaying synth player 8192
     playerJoin player
-    -- One more block for reverb/decay tail
+    -- Destroy player before tail render to avoid use-after-free
+    withForeignPtr playerFPtr $ \ptr -> c'delete_fluid_player ptr
     tailSamples <- synthWriteS16 synth 4096
     sampleRate <- getSynthSampleRate synth
     return $ PCMBuffer sampleRate 2 (samples V.++ tailSamples)
