@@ -301,14 +301,30 @@ withSettings = bracket newSettings (const $ return ())
 -- or throws.
 withSynth :: SynthSettings -> FilePath -> (Synth -> IO a) -> IO a
 withSynth (SynthSettings settings) sfPath action =
-    bracket (newSynth settings) (const $ return ()) $ \synth -> do
+    bracket onCreate deleteSynth $ \synth -> do
         _ <- loadSoundFont synth sfPath
         action synth
+  where
+    Settings sFPtr = settings
+    onCreate = withForeignPtr sFPtr $ \ptr -> do
+        ptr' <- c'new_fluid_synth ptr
+        synthFPtr <- newForeignPtr_ ptr'
+        return $! Synth sFPtr M.empty synthFPtr
+    deleteSynth (Synth _ _ synthFPtr) =
+        withForeignPtr synthFPtr $ \ptr -> c'delete_fluid_synth ptr
 
 -- | Create a player from synth, perform an action, and release the player.
 -- The player is stopped and released when the action completes or throws.
 withPlayer :: Synth -> (Player -> IO a) -> IO a
-withPlayer synth = bracket (newPlayer synth) (const $ return ())
+withPlayer synth@(Synth _ _ synthFPtr) action =
+    bracket onCreate deletePlayer action
+  where
+    onCreate = withForeignPtr synthFPtr $ \ptr -> do
+        ptr' <- c'new_fluid_player ptr
+        playerFPtr <- newForeignPtr_ ptr'
+        return $ Player synth playerFPtr
+    deletePlayer (Player _ playerFPtr) =
+        withForeignPtr playerFPtr $ \ptr -> c'delete_fluid_player ptr
 
 loadSF :: Synth -> String -> IO Synth
 loadSF (Synth settings sfmap synth) path = do
