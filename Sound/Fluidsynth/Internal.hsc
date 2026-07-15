@@ -72,6 +72,7 @@ module Sound.Fluidsynth.Internal where
 #ccall fluid_player_join , Ptr <fluid_player_t> -> IO CInt
 #ccall fluid_player_get_status , Ptr <fluid_player_t> -> IO CInt
 #ccall fluid_player_seek , Ptr <fluid_player_t> -> CInt -> IO CInt
+#ccall fluid_player_set_loop , Ptr <fluid_player_t> -> CInt -> IO CInt
 
 #num FLUID_PLAYER_READY
 #num FLUID_PLAYER_PLAYING

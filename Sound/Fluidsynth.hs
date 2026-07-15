@@ -48,6 +48,7 @@ module Sound.Fluidsynth
     ,playerJoin
     ,playerGetStatus
     ,playerSeek
+    ,playerSetLoop
     ,synthNoteOn
     ,synthNoteOff
     ,synthWriteS16
@@ -682,6 +683,16 @@ playerSeek (Player _ player) ticks = do
         c'fluid_player_seek ptr (fromIntegral ticks)
     when (ret /= 0) $
         ioError $ userError "Failed to seek player"
+
+-- | Set the player loop mode.
+-- 0 = play once (no loop), 1 = loop once (play twice), -1 = loop forever.
+-- Throws 'IOException' on failure.
+playerSetLoop :: Player -> Int -> IO ()
+playerSetLoop (Player _ player) loop = do
+    ret <- withForeignPtr player $ \ptr ->
+        c'fluid_player_set_loop ptr (fromIntegral loop)
+    when (ret /= 0) $
+        ioError $ userError "Failed to set player loop"
 
 -- | Make an event.
 --
