@@ -48,9 +48,10 @@ module Sound.Fluidsynth.Internal where
 #ccall fluid_synth_sfload , Ptr <fluid_synth_t> -> CString -> CInt -> IO CInt
 #ccall fluid_synth_sfreload , Ptr <fluid_synth_t> -> CUInt -> IO CInt
 #ccall fluid_synth_sfunload , Ptr <fluid_synth_t> -> CUInt -> CInt -> IO CInt
-#ccall fluid_synth_program_select , Ptr <fluid_synth_t> -> CInt -> Ptr <fluid_sfont_t> -> CInt -> CInt -> IO CInt
+#ccall fluid_synth_set_bank_offset , Ptr <fluid_synth_t> -> CInt -> CInt -> IO CInt
+#ccall fluid_synth_get_bank_offset , Ptr <fluid_synth_t> -> CInt -> IO CInt
+#ccall fluid_synth_program_select , Ptr <fluid_synth_t> -> CInt -> CInt -> CInt -> CInt -> IO CInt
 #ccall fluid_synth_system_reset , Ptr <fluid_synth_t> -> IO CInt
-#ccall fluid_synth_get_sfont_by_id , Ptr <fluid_synth_t> -> CInt -> IO (Ptr <fluid_sfont_t>)
 #ccall fluid_synth_error , Ptr <fluid_synth_t> -> IO CString
 #ccall fluid_synth_write_s16 , Ptr <fluid_synth_t> -> CInt -> Ptr () -> CInt -> CInt -> Ptr () -> CInt -> CInt -> IO CInt
 #ccall fluid_synth_write_float , Ptr <fluid_synth_t> -> CInt -> Ptr CFloat -> CInt -> CInt -> Ptr CFloat -> CInt -> CInt -> IO CInt

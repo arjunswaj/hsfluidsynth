@@ -55,6 +55,8 @@ module Sound.Fluidsynth
     ,synthWriteFloat
     ,synthProgramChange
     ,synthBankSelect
+    ,synthSetBankOffset
+    ,synthGetBankOffset
     ,synthProgramSelect
     ,synthSystemReset
     ,FileRenderer()
@@ -591,22 +593,36 @@ synthBankSelect (Synth _ _ synth) c b =
     void $ withForeignPtr synth $ \ptr ->
         c'fluid_synth_bank_select ptr (fromIntegral c) (fromIntegral b)
 
+-- | Set the bank offset of a loaded SoundFont. All of the SoundFont's
+-- presets are subsequently found at @bank + offset@.
+-- Throws 'IOException' if no SoundFont with the given ID is loaded.
+synthSetBankOffset :: Synth -> SoundFontId -> Int -> IO ()
+synthSetBankOffset (Synth _ _ synth) (SoundFontId sfontId) offset =
+    withForeignPtr synth $ \ptr -> do
+        ret <- c'fluid_synth_set_bank_offset ptr (fromIntegral sfontId)
+                     (fromIntegral offset)
+        when (ret /= 0) $ do
+            errStr <- c'fluid_synth_error ptr
+            msg <- peekCAString errStr
+            ioError $ userError $ "synthSetBankOffset: " ++ msg
+
+-- | Get the bank offset previously set with 'synthSetBankOffset' (default 0).
+synthGetBankOffset :: Synth -> SoundFontId -> IO Int
+synthGetBankOffset (Synth _ _ synth) (SoundFontId sfontId) =
+    withForeignPtr synth $ \ptr ->
+        fromIntegral <$> c'fluid_synth_get_bank_offset ptr (fromIntegral sfontId)
+
 -- | Select a program for a channel from a specific SoundFont, bank, and
--- program number. Throws 'IOException' if the SoundFont cannot be found or
--- the selection fails.
+-- program number. Throws 'IOException' if the selection fails.
 synthProgramSelect :: Synth -> Channel -> SoundFontId -> Int -> Int -> IO ()
 synthProgramSelect (Synth _ _ synth) (Channel c) (SoundFontId sfontId) bank prog =
     withForeignPtr synth $ \ptr -> do
-        sfptr <- c'fluid_synth_get_sfont_by_id ptr (fromIntegral sfontId)
-        if sfptr == nullPtr
-            then ioError $ userError $ "synthProgramSelect: soundfont not found: " ++ show sfontId
-            else do
-                ret <- c'fluid_synth_program_select ptr (fromIntegral c) sfptr
-                         (fromIntegral bank) (fromIntegral prog)
-                when (ret /= 0) $ do
-                    errStr <- c'fluid_synth_error ptr
-                    msg <- peekCAString errStr
-                    ioError $ userError $ "synthProgramSelect: " ++ msg
+        ret <- c'fluid_synth_program_select ptr (fromIntegral c)
+                     (fromIntegral sfontId) (fromIntegral bank) (fromIntegral prog)
+        when (ret /= 0) $ do
+            errStr <- c'fluid_synth_error ptr
+            msg <- peekCAString errStr
+            ioError $ userError $ "synthProgramSelect: " ++ msg
 
 -- | Reset the synth to its default state (all controllers reset, notes off).
 synthSystemReset :: Synth -> IO ()
