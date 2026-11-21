@@ -1,0 +1,47 @@
+name: hsfluidsynth
+
+# Everything in this repo runs in Docker. The host only runs `docker compose`
+# and `.devcontainer/exec.sh`; it never runs GHC, Cabal, Stack, ormolu, or hlint.
+#
+#   docker compose --profile dev up -d --build dev   # dev toolchain container
+#   docker compose --profile dev down                # stop and remove container
+
+services:
+  # Long-running Haskell + FluidSynth 2.5.5 toolchain container used by
+  # .devcontainer/exec.sh and by the VS Code dev container. Shares the same
+  # named volumes as .devcontainer/devcontainer.json so build caches survive
+  # either entry point.
+  dev:
+    profiles: ["dev"]
+    build:
+      context: .
+      dockerfile: .devcontainer/Dockerfile
+    image: hsfluidsynth-dev:local
+    init: true
+    working_dir: /workspace
+    command: ["sleep", "infinity"]
+    environment:
+      SOUNDFONTS_DIR: /soundfonts
+      SSH_AUTH_SOCK: /run/host-services/ssh-auth.sock
+      GIT_SSH_COMMAND: "ssh -o StrictHostKeyChecking=accept-new"
+    # Match the devcontainer.json fd limit. The host limit still applies.
+    ulimits:
+      nofile:
+        soft: 131072
+        hard: 131072
+    volumes:
+      - .:/workspace
+      - dist-newstyle:/workspace/dist-newstyle
+      - cabal-store:/root/.cabal
+      - ${HOME}/.gitconfig:/root/.gitconfig
+      - ${HOME}/.config/jj:/root/.config/jj
+      - ${HOME}/.local/share/soundfonts:/soundfonts:ro
+      - /run/host-services/ssh-auth.sock:/run/host-services/ssh-auth.sock
+
+volumes:
+  # Explicit names so the VS Code dev container and the Compose `dev` service
+  # share one Cabal build tree and package store.
+  dist-newstyle:
+    name: hsfluidsynth-dist-newstyle
+  cabal-store:
+    name: hsfluidsynth-cabal-store

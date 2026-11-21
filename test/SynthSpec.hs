@@ -6,48 +6,47 @@ import Sound.Fluidsynth
 import System.IO.Error (ioeGetErrorString)
 import Test.Tasty
 import Test.Tasty.HUnit
+import TestSoundFont (resolveDualTestSoundFonts)
 
 main :: IO ()
 main = do
-    eFonts <- try probeFixtureFonts
-    case eFonts of
-        Left (_ :: IOException) ->
+    mFonts <- resolveDualTestSoundFonts
+    case mFonts of
+        Nothing ->
             defaultMain $ testGroup "Synth"
                 (baseTests ++ [testGroup "when fixture fonts available (no SoundFont)" []])
-        Right _ ->
-            defaultMain $ testGroup "Synth" (baseTests ++ [fixtureTests])
-
-sf2Path :: FilePath
-sf2Path =
-    "/opt/homebrew/Cellar/fluid-synth/2.5.5/share/fluid-synth/sf2/VintageDreamsWaves-v2.sf2"
-
-sf3Path :: FilePath
-sf3Path =
-    "/opt/homebrew/Cellar/fluid-synth/2.5.5/share/fluid-synth/sf2/VintageDreamsWaves-v2.sf3"
+        Just (sfPathA, sfPathB) -> do
+            eFonts <- try (probeFixtureFonts sfPathA sfPathB)
+            case eFonts of
+                Left (_ :: IOException) ->
+                    defaultMain $ testGroup "Synth"
+                        (baseTests ++ [testGroup "when fixture fonts available (no SoundFont)" []])
+                Right _ ->
+                    defaultMain $ testGroup "Synth" (baseTests ++ [fixtureTests sfPathA sfPathB])
 
 -- | Verify both fixture fonts load; used to gate the fixture-dependent group.
-probeFixtureFonts :: IO ()
-probeFixtureFonts = do
+probeFixtureFonts :: FilePath -> FilePath -> IO ()
+probeFixtureFonts sfPathA sfPathB = do
     s <- newSettings
     synth <- newSynth s
-    _ <- loadSoundFont synth sf2Path
-    _ <- loadSoundFont synth sf3Path
+    _ <- loadSoundFont synth sfPathA
+    _ <- loadSoundFont synth sfPathB
     return ()
 
 -- | Fresh synth with both fixture fonts loaded.
-newSFTestSynth :: IO (Synth, SoundFontId, SoundFontId)
-newSFTestSynth = do
+newSFTestSynth :: FilePath -> FilePath -> IO (Synth, SoundFontId, SoundFontId)
+newSFTestSynth sfPathA sfPathB = do
     s <- newSettings
     synth <- newSynth s
-    sfA <- loadSoundFont synth sf2Path
-    sfB <- loadSoundFont synth sf3Path
+    sfA <- loadSoundFont synth sfPathA
+    sfB <- loadSoundFont synth sfPathB
     return (synth, sfA, sfB)
 
 baseTests :: [TestTree]
 baseTests =
     [ testCase "newSynth initializes successfully" $ do
         s <- newSettings
-        synth <- newSynth s
+        _ <- newSynth s
         -- Just verifying it doesn't throw; synth holds a ref to settings
         return ()
     , testCase "system reset doesn't crash" $ do
@@ -83,25 +82,25 @@ baseTests =
             Right _                 -> assertFailure "expected IOException"
     ]
 
-fixtureTests :: TestTree
-fixtureTests = testGroup "when fixture fonts available"
+fixtureTests :: FilePath -> FilePath -> TestTree
+fixtureTests sfPathA sfPathB = testGroup "when fixture fonts available"
     [ testCase "program select valid soundfont succeeds" $ do
-        (synth, sfid, _) <- newSFTestSynth
+        (synth, sfid, _) <- newSFTestSynth sfPathA sfPathB
         synthProgramSelect synth (Channel 0) sfid 0 0
     , testCase "program select invalid soundfont throws IOException" $ do
-        (synth, _, _) <- newSFTestSynth
+        (synth, _, _) <- newSFTestSynth sfPathA sfPathB
         r <- try $ synthProgramSelect synth (Channel 0) (SoundFontId 999999) 0 0
         case r of
             Left e -> assertBool "error should start with 'synthProgramSelect:'" $
                 "synthProgramSelect:" `isPrefixOf` ioeGetErrorString e
             Right _ -> assertFailure "expected IOException"
     , testCase "bank offset set/get roundtrip" $ do
-        (synth, sfid, _) <- newSFTestSynth
+        (synth, sfid, _) <- newSFTestSynth sfPathA sfPathB
         synthSetBankOffset synth sfid 160
         offset <- synthGetBankOffset synth sfid
         assertEqual "bank offset" 160 offset
     , testCase "dual soundfont program select honors bank offset" $ do
-        (synth, sfA, sfB) <- newSFTestSynth
+        (synth, sfA, sfB) <- newSFTestSynth sfPathA sfPathB
         assertBool "soundfont ids should differ" (sfA /= sfB)
         synthSetBankOffset synth sfB 160
         synthProgramSelect synth (Channel 0) sfA 0 0

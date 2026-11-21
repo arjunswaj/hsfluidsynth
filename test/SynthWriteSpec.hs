@@ -1,29 +1,30 @@
 module Main where
 
 import Control.Exception (IOException, try)
-import Data.Int (Int16)
 import qualified Data.Vector.Storable as V
 import Sound.Fluidsynth
 import Test.Tasty
 import Test.Tasty.HUnit
+import TestSoundFont (resolveTestSoundFont)
 
 main :: IO ()
 main = do
-    eResult <- try $ synthWithSF
-    case eResult of
-        Left (_ :: IOException) ->
+    mSfPath <- resolveTestSoundFont
+    case mSfPath of
+        Nothing ->
             defaultMain $ testGroup "SynthWriteS16 (no SoundFont)" baseTests
-        Right result -> defaultMain result
+        Just sfPath -> do
+            eResult <- try (synthWithSF sfPath)
+            case eResult of
+                Left (_ :: IOException) ->
+                    defaultMain $ testGroup "SynthWriteS16 (no SoundFont)" baseTests
+                Right result -> defaultMain result
   where
-    synthWithSF = do
+    synthWithSF sfPath = do
         s <- newSettings
         synth <- newSynth s
         _ <- loadSoundFont synth sfPath
         return $ testGroup "SynthWriteS16" (baseTests ++ sfDependentTests synth)
-
-sfPath :: FilePath
-sfPath =
-    "/opt/homebrew/Cellar/fluid-synth/2.5.5/share/fluid-synth/sf2/VintageDreamsWaves-v2.sf2"
 
 baseTests :: [TestTree]
 baseTests =

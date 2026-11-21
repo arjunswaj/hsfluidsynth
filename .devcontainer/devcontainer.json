@@ -1,0 +1,44 @@
+{
+  "name": "hsfluidsynth",
+  "build": {
+    "dockerfile": "Dockerfile",
+    "context": ".."
+  },
+  "workspaceFolder": "/workspace",
+  "mounts": [
+    "source=${localWorkspaceFolder},target=/workspace,type=bind,consistency=cached",
+    "source=hsfluidsynth-dist-newstyle,target=/workspace/dist-newstyle,type=volume",
+    "source=hsfluidsynth-cabal-store,target=/root/.cabal,type=volume",
+    "source=${localEnv:HOME}/.gitconfig,target=/root/.gitconfig,type=bind",
+    "source=${localEnv:HOME}/.config/jj,target=/root/.config/jj,type=bind",
+    "source=${localEnv:HOME}/.local/share/soundfonts,target=/soundfonts,type=bind,consistency=cached,ro",
+    "source=/run/host-services/ssh-auth.sock,target=/run/host-services/ssh-auth.sock,type=bind"
+  ],
+  "containerEnv": {
+    "EDITOR": "vim",
+    "VISUAL": "vim",
+    "SOUNDFONTS_DIR": "/soundfonts",
+    "SSH_AUTH_SOCK": "/run/host-services/ssh-auth.sock",
+    "GIT_SSH_COMMAND": "ssh -o StrictHostKeyChecking=accept-new"
+  },
+  "runArgs": ["--ulimit", "nofile=131072:131072"],
+  "customizations": {
+    "vscode": {
+      "settings": {
+        "files.eol": "\n",
+        "terminal.integrated.defaultProfile.linux": "bash",
+        "haskell.formattingProvider": "ormolu",
+        "haskell.plugin.hlint.globalOn": true,
+        "haskell.manageHLS": "GHCup",
+        "haskell.trace.server": "off",
+        "[haskell]": {
+          "editor.defaultFormatter": "haskell.haskell"
+        }
+      },
+      "extensions": [
+        "haskell.haskell"
+      ]
+    }
+  },
+  "postCreateCommand": "bash /workspace/.devcontainer/post-create.sh"
+}
