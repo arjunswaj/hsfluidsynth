@@ -68,10 +68,12 @@ module Sound.Fluidsynth
     ,eventNoteOn
     ,eventNoteOff
     ,PCMBuffer(..)
+    ,PCMBufferFloat(..)
     ,pcmBufferFromSynth
     ,getSampleRate
     ,renderPCM
     ,renderMidi
+    ,renderMidiFloat
     ,LogLevel(..)
     ,LogCallback
     ,defaultLogCallback
@@ -79,14 +81,16 @@ module Sound.Fluidsynth
 where
 
 import           Control.Concurrent        (threadDelay)
+import           Control.Concurrent.MVar   (MVar, modifyMVar, modifyMVar_,
+                                            newMVar)
 import           Control.Exception         (bracket, finally)
 import           Control.Monad
 import           Data.Int                  (Int16)
 import qualified Data.Map                  as M
 import qualified Data.Vector.Storable      as V
 import           Foreign.C.String
-import           Foreign.C.Types           (CDouble, CFloat, CInt (..), CShort,
-                                            CUInt)
+import           Foreign.C.Types           (CFloat, CInt (..), CShort, CUInt)
+import qualified Foreign.Concurrent        as FC
 import           Foreign.ForeignPtr
 import           Foreign.Marshal.Alloc     (alloca, finalizerFree, free,
                                             mallocBytes)
@@ -101,10 +105,10 @@ import           Sound.Fluidsynth.Internal
 import           System.IO                 (hPutStrLn, stderr)
 import           System.IO.Unsafe          (unsafePerformIO)
 
--- | Whether to register C finalizers for FluidSynth objects.
--- On macOS, we skip cleanup to avoid a FluidSynth exit segfault
--- that would prevent HPC from writing coverage .tix files.
--- The OS will reclaim all memory when the process exits.
+-- | Whether to register finalizers for FluidSynth objects.
+-- On macOS, we skip GC finalizers to avoid an upstream exit issue with HPC
+-- coverage; on Linux, reference-counted Haskell finalizers guarantee safe
+-- child-before-parent teardown order.
 cleanupEnabled :: Bool
 #if defined(darwin_HOST_OS)
 cleanupEnabled = False
@@ -112,20 +116,48 @@ cleanupEnabled = False
 cleanupEnabled = True
 #endif
 
--- | Conditionally attach a finalizer to a ForeignPtr.
--- On macOS (where cleanupEnabled is False), no finalizer is registered,
--- preventing the segfault during process exit.
+-- | Conditionally attach a C finalizer to a ForeignPtr (used for standalone
+-- objects like 'Event' that have no parent resource).
 foreignPtrWithCleanup :: FinalizerPtr a -> Ptr a -> IO (ForeignPtr a)
 foreignPtrWithCleanup finalizer ptr
     | cleanupEnabled = newForeignPtr finalizer ptr
     | otherwise      = newForeignPtr_ ptr
 
-newtype Settings = Settings (ForeignPtr C'fluid_settings_t)
+-- | Conditionally attach a Haskell finalizer to a ForeignPtr.
+concurrentPtrWithCleanup :: Ptr a -> IO () -> IO (ForeignPtr a)
+concurrentPtrWithCleanup ptr finalizer
+    | cleanupEnabled = FC.newForeignPtr ptr finalizer
+    | otherwise      = newForeignPtr_ ptr
+
+-- | Thread-safe reference-counted C resource handle.
+-- Guarantees parent resources ('Settings' -> 'Synth' -> 'Player'/'Driver'/
+-- 'FileRenderer') are never deleted before their children, even when GHC runs
+-- finalizers in arbitrary order during GC or process exit.
+data RefHandle = RefHandle !(MVar Int) !(IO ())
+
+newRefHandle :: IO () -> IO RefHandle
+newRefHandle releaseAction = do
+    rc <- newMVar 1
+    return $ RefHandle rc releaseAction
+
+retainRef :: RefHandle -> IO ()
+retainRef (RefHandle rc _) =
+    modifyMVar_ rc (\n -> return $! n + 1)
+
+releaseRef :: RefHandle -> IO ()
+releaseRef (RefHandle rc releaseAction) = do
+    shouldFree <- modifyMVar rc $ \n ->
+        if n <= 1
+            then return (0, n == 1)
+            else return (n - 1, False)
+    when shouldFree releaseAction
+
+data Settings = Settings (ForeignPtr C'fluid_settings_t) RefHandle
 
 -- | Settings prepared for synth creation.
 newtype SynthSettings = SynthSettings Settings
-data Synth = Synth (ForeignPtr C'fluid_settings_t) (M.Map FilePath CUInt)
-             (ForeignPtr C'fluid_synth_t)
+data Synth = Synth (ForeignPtr C'fluid_settings_t) RefHandle
+             (M.Map FilePath CUInt) (ForeignPtr C'fluid_synth_t) RefHandle
 newtype Driver = Driver (ForeignPtr C'fluid_audio_driver_t)
 data Player = Player Synth (ForeignPtr C'fluid_player_t)
 newtype Event = Event (ForeignPtr C'fluid_event_t)
@@ -206,11 +238,12 @@ withLogCallback cb action = do
 newSettings :: IO Settings
 newSettings = do
     ptr <- c'new_fluid_settings
-    settings <- foreignPtrWithCleanup p'delete_fluid_settings ptr
-    return $! Settings settings
+    ref <- newRefHandle (c'delete_fluid_settings ptr)
+    settings <- concurrentPtrWithCleanup ptr (releaseRef ref)
+    return $! Settings settings ref
 
 setStr :: Settings -> String -> String -> IO ()
-setStr (Settings settings) key val =
+setStr (Settings settings _) key val =
     withForeignPtr settings $ \ptr ->
         withCAString key $ \ckey ->
             withCAString val $ \cval -> do
@@ -219,7 +252,7 @@ setStr (Settings settings) key val =
                     ioError $ userError $ "Failed to set string setting: " ++ key
 
 getStr :: Settings -> String -> IO (Maybe String)
-getStr (Settings settings) key =
+getStr (Settings settings _) key =
     withForeignPtr settings $ \ptr ->
         withCAString key $ \ckey ->
             alloca $ \pstr -> do
@@ -233,7 +266,7 @@ getStr (Settings settings) key =
                         return (Just s)
 
 setNum :: Settings -> String -> Double -> IO ()
-setNum (Settings settings) key val =
+setNum (Settings settings _) key val =
     withForeignPtr settings $ \ptr ->
         withCAString key $ \ckey -> do
             ret <- c'fluid_settings_setnum ptr ckey (realToFrac val)
@@ -241,7 +274,7 @@ setNum (Settings settings) key val =
                 ioError $ userError $ "Failed to set numeric setting: " ++ key
 
 getNum :: Settings -> String -> IO (Maybe Double)
-getNum (Settings settings) key =
+getNum (Settings settings _) key =
     withForeignPtr settings $ \ptr ->
         withCAString key $ \ckey ->
             alloca $ \pnum -> do
@@ -253,7 +286,7 @@ getNum (Settings settings) key =
                         return $ Just (realToFrac v :: Double)
 
 setInt :: Settings -> String -> Int -> IO ()
-setInt (Settings settings) key val =
+setInt (Settings settings _) key val =
     withForeignPtr settings $ \ptr ->
         withCAString key $ \ckey -> do
             ret <- c'fluid_settings_setint ptr ckey (fromIntegral val)
@@ -261,7 +294,7 @@ setInt (Settings settings) key val =
                 ioError $ userError $ "Failed to set integer setting: " ++ key
 
 getInt :: Settings -> String -> IO (Maybe Int)
-getInt (Settings settings) key =
+getInt (Settings settings _) key =
     withForeignPtr settings $ \ptr ->
         withCAString key $ \ckey ->
             alloca $ \pint -> do
@@ -273,25 +306,34 @@ getInt (Settings settings) key =
                         return $ Just (fromIntegral v :: Int)
 
 newSynth :: Settings -> IO Synth
-newSynth (Settings settings) = do
+newSynth (Settings settings settingsRef) =
     withForeignPtr settings $ \ptr -> do
+        retainRef settingsRef
         ptr' <- c'new_fluid_synth ptr
-        synth <- foreignPtrWithCleanup p'delete_fluid_synth ptr'
-        return $! Synth settings M.empty synth
+        synthRef <- newRefHandle $
+            c'delete_fluid_synth ptr' `finally` releaseRef settingsRef
+        synth <- concurrentPtrWithCleanup ptr' (releaseRef synthRef)
+        return $! Synth settings settingsRef M.empty synth synthRef
 
 newDriver :: Synth -> IO Driver
-newDriver (Synth settings _ synth) = do
-    withForeignPtr settings $ \ptr -> do
+newDriver (Synth settings _ _ synth synthRef) =
+    withForeignPtr settings $ \ptr ->
         withForeignPtr synth $ \ptr' -> do
+            retainRef synthRef
             ptr'' <- c'new_fluid_audio_driver ptr ptr'
-            driver <- foreignPtrWithCleanup p'delete_fluid_audio_driver ptr''
+            driverRef <- newRefHandle $
+                c'delete_fluid_audio_driver ptr'' `finally` releaseRef synthRef
+            driver <- concurrentPtrWithCleanup ptr'' (releaseRef driverRef)
             return $! Driver driver
 
 newPlayer :: Synth -> IO Player
-newPlayer s@(Synth _ _ synth) = do
+newPlayer s@(Synth _ _ _ synth synthRef) =
     withForeignPtr synth $ \ptr -> do
+        retainRef synthRef
         ptr' <- c'new_fluid_player ptr
-        player <- foreignPtrWithCleanup p'delete_fluid_player ptr'
+        playerRef <- newRefHandle $
+            c'delete_fluid_player ptr' `finally` releaseRef synthRef
+        player <- concurrentPtrWithCleanup ptr' (releaseRef playerRef)
         return $! Player s player
 
 -- | Create settings, perform an action, and release settings.
@@ -308,29 +350,32 @@ withSynth (SynthSettings settings) sfPath action =
         _ <- loadSoundFont synth sfPath
         action synth
   where
-    Settings sFPtr = settings
+    Settings sFPtr sRef = settings
     onCreate = withForeignPtr sFPtr $ \ptr -> do
+        retainRef sRef
         ptr' <- c'new_fluid_synth ptr
+        synthRef <- newRefHandle $
+            c'delete_fluid_synth ptr' `finally` releaseRef sRef
         synthFPtr <- newForeignPtr_ ptr'
-        return $! Synth sFPtr M.empty synthFPtr
-    deleteSynth (Synth _ _ synthFPtr) =
-        withForeignPtr synthFPtr $ \ptr -> c'delete_fluid_synth ptr
+        return $! Synth sFPtr sRef M.empty synthFPtr synthRef
+    deleteSynth (Synth _ _ _ _ synthRef) = releaseRef synthRef
 
 -- | Create a player from synth, perform an action, and release the player.
 -- The player is stopped and released when the action completes or throws.
 withPlayer :: Synth -> (Player -> IO a) -> IO a
-withPlayer synth@(Synth _ _ synthFPtr) action =
+withPlayer synth@(Synth _ _ _ synthFPtr synthRef) action =
     bracket onCreate deletePlayer action
   where
     onCreate = withForeignPtr synthFPtr $ \ptr -> do
+        retainRef synthRef
         ptr' <- c'new_fluid_player ptr
         playerFPtr <- newForeignPtr_ ptr'
         return $ Player synth playerFPtr
     deletePlayer (Player _ playerFPtr) =
-        withForeignPtr playerFPtr $ \ptr -> c'delete_fluid_player ptr
+        withForeignPtr playerFPtr c'delete_fluid_player `finally` releaseRef synthRef
 
 loadSF :: Synth -> String -> IO Synth
-loadSF (Synth settings sfmap synth) path = do
+loadSF (Synth settings settingsRef sfmap synth synthRef) path = do
     abspath <- canonicalizePath path
     let msfid = M.lookup abspath sfmap
     withForeignPtr synth $ \ptr ->
@@ -339,16 +384,16 @@ loadSF (Synth settings sfmap synth) path = do
                 err <- c'fluid_synth_sfreload ptr sfid
                 if err == -1
                     then ioError $ userError "Couldn't reload soundfont!"
-                    else return $ Synth settings sfmap synth
+                    else return $ Synth settings settingsRef sfmap synth synthRef
             Nothing -> do
                 sfid <- c'fluid_synth_sfload ptr cstr 1
                 let sfmap' = M.insert abspath (fromIntegral sfid) sfmap
                 if sfid == -1
                     then ioError $ userError "Couldn't load soundfont!"
-                    else return $ Synth settings sfmap' synth
+                    else return $ Synth settings settingsRef sfmap' synth synthRef
 
 unloadSF :: Synth -> String -> IO Synth
-unloadSF (Synth settings sfmap synth) path = do
+unloadSF (Synth settings settingsRef sfmap synth synthRef) path = do
     abspath <- canonicalizePath path
     case M.lookup abspath sfmap of
         Nothing -> ioError $ userError "Soundfont not loaded!"
@@ -358,16 +403,16 @@ unloadSF (Synth settings sfmap synth) path = do
                 let sfmap' = M.delete abspath sfmap
                 if err == -1
                     then ioError $ userError "Couldn't unload soundfont!"
-                    else return $ Synth settings sfmap' synth
+                    else return $ Synth settings settingsRef sfmap' synth synthRef
 
 synthNoteOn :: Synth -> Channel -> Key -> Velocity -> IO ()
-synthNoteOn (Synth _ _ synth) c k v =
+synthNoteOn (Synth _ _ _ synth _) c k v =
     void $ withForeignPtr synth $ \ptr ->
         c'fluid_synth_noteon ptr (fromIntegral c) (fromIntegral k)
             (fromIntegral v)
 
 synthNoteOff :: Synth -> Channel -> Key -> IO ()
-synthNoteOff (Synth _ _ synth) c k =
+synthNoteOff (Synth _ _ _ synth _) c k =
     withForeignPtr synth $ \ptr ->
         void $ c'fluid_synth_noteoff ptr (fromIntegral c) (fromIntegral k)
 
@@ -378,7 +423,7 @@ synthNoteOff (Synth _ _ synth) c k =
 -- (left and right channels interleaved: L0, R0, L1, R1, ...).
 -- Throws 'IOException' if the underlying FluidSynth call fails.
 synthWriteS16 :: Synth -> Int -> IO (V.Vector Int16)
-synthWriteS16 (Synth _ _ synth) nframes = do
+synthWriteS16 (Synth _ _ _ synth _) nframes = do
     let nsamples = nframes * 2
         bufSize = nsamples * sizeOf (undefined :: CShort)
     buf <- mallocBytes bufSize
@@ -397,7 +442,7 @@ synthWriteS16 (Synth _ _ synth) nframes = do
 -- (left and right channels interleaved: L0, R0, L1, R1, ...).
 -- Throws 'IOException' if the underlying FluidSynth call fails.
 synthWriteFloat :: Synth -> Int -> IO (V.Vector CFloat)
-synthWriteFloat (Synth _ _ synth) nframes = do
+synthWriteFloat (Synth _ _ _ synth _) nframes = do
     let nsamples = nframes * 2
         bufSize = nsamples * sizeOf (undefined :: CFloat)
     buf <- mallocBytes bufSize
@@ -421,6 +466,20 @@ data PCMBuffer = PCMBuffer
     { pcmSampleRate :: !Int
     , pcmChannels   :: !Int
     , pcmSamples    :: !(V.Vector Int16)
+    }
+    deriving (Eq, Show)
+
+-- | Render audio samples from the synth in a self-describing 32-bit float buffer.
+--
+-- PCMBufferFloat bundles 32-bit IEEE float, interleaved audio samples
+-- together with their sample rate and channel count, preserving full dynamic
+-- range without 16-bit integer truncation.
+--
+-- Sample layout: @[L, R, L, R, ...]@ for stereo (2 channels).
+data PCMBufferFloat = PCMBufferFloat
+    { pcmFloatSampleRate :: !Int
+    , pcmFloatChannels   :: !Int
+    , pcmFloatSamples    :: !(V.Vector Float)
     }
     deriving (Eq, Show)
 
@@ -448,13 +507,13 @@ getSampleRate = flip getNum "synth.sample-rate"
 -- no duplicate finalizer).  Falls back to 44100 if the setting
 -- cannot be read.
 getSynthSampleRate :: Synth -> IO Int
-getSynthSampleRate (Synth sf _ _) =
+getSynthSampleRate (Synth sf _ _ _ _) =
     withForeignPtr sf $ \ptr ->
         withCAString "synth.sample-rate" $ \ckey ->
             alloca $ \pval -> do
                 err <- c'fluid_settings_getnum ptr ckey pval
                 if err == 0
-                    then round . realToFrac <$> peek pval
+                    then round <$> peek pval
                     else return 44100
 
 -- | Render PCM audio from the synth, auto-detecting the sample rate.
@@ -480,7 +539,7 @@ renderPCM synth nframes = do
 --
 -- Throws 'IOException' if the MIDI file cannot be loaded or the player fails.
 renderMidi :: Synth -> FilePath -> IO PCMBuffer
-renderMidi synth@(Synth _ _ synthFPtr) path = do
+renderMidi synth@(Synth _ _ _ synthFPtr _) path = do
     exists <- doesFileExist path
     unless exists $
         ioError $ mkIOError doesNotExistErrorType
@@ -501,27 +560,68 @@ renderMidi synth@(Synth _ _ synthFPtr) path = do
     sampleRate <- getSynthSampleRate synth
     return $ PCMBuffer sampleRate 2 (samples V.++ tailSamples)
 
+-- | Convert a storable vector of 'CFloat' samples to 'Float' without
+-- quantization. 'CFloat' is a @newtype@ over 'Float' with identical
+-- 'Storable' layout, so 'V.unsafeCast' is zero-copy when sizes match.
+cfloatToFloatVec :: V.Vector CFloat -> V.Vector Float
+cfloatToFloatVec
+    | sizeOf (undefined :: CFloat) == sizeOf (undefined :: Float) = V.unsafeCast
+    | otherwise = V.map realToFrac
+
+-- | Render an entire MIDI file to 32-bit float PCM audio.
+--
+-- Matches 'renderMidi' in player lifecycle and tail rendering, but synthesizes
+-- via 'synthWriteFloat' to preserve full floating-point dynamic range without
+-- 16-bit integer truncation.
+--
+-- Throws 'IOException' if the MIDI file cannot be loaded or the player fails.
+renderMidiFloat :: Synth -> FilePath -> IO PCMBufferFloat
+renderMidiFloat synth@(Synth _ _ _ synthFPtr _) path = do
+    exists <- doesFileExist path
+    unless exists $
+        ioError $ mkIOError doesNotExistErrorType
+            ("renderMidiFloat: MIDI file not found: " ++ path) Nothing Nothing
+    blocks <- bracket createPlayer deletePlayer $ \player -> do
+        playerAdd player path
+        playerPlay player
+        threadDelay 50000
+        bs <- collectBlocksWhilePlaying (synthWriteFloat synth) player 8192
+        playerJoin player
+        return bs
+    -- Destroy player before tail render to avoid use-after-free
+    tailSamples <- synthWriteFloat synth 4096
+    sampleRate <- getSynthSampleRate synth
+    let allSamples = cfloatToFloatVec (V.concat (blocks ++ [tailSamples]))
+    return $ PCMBufferFloat sampleRate 2 allSamples
+  where
+    createPlayer = withForeignPtr synthFPtr $ \ptr -> do
+        ptr' <- c'new_fluid_player ptr
+        playerFPtr <- newForeignPtr_ ptr'
+        return $ Player synth playerFPtr
+    deletePlayer (Player _ playerFPtr) =
+        withForeignPtr playerFPtr c'delete_fluid_player
+
 -- | A file renderer that writes synth audio directly to a file configured
 -- in the synth's settings (e.g., @audio.file.name@, @audio.file.type@,
 -- @audio.file.sample-format@).
 --
--- Keeps a reference to the underlying 'fluid_synth_t' 'ForeignPtr' to ensure
--- correct finalization order (the renderer must be destroyed before the synth).
-data FileRenderer = FileRenderer (ForeignPtr C'fluid_synth_t) (ForeignPtr C'fluid_file_renderer_t)
+-- Keeps a reference to the underlying 'fluid_synth_t' 'ForeignPtr' and
+-- 'RefHandle' to ensure correct finalization order (the renderer must be
+-- destroyed before the synth).
+data FileRenderer = FileRenderer (ForeignPtr C'fluid_synth_t) RefHandle (ForeignPtr C'fluid_file_renderer_t)
 
 -- | Create a file renderer for the given synth.
 --
 -- The output file path and format are controlled by the synth's settings.
 -- At minimum, you should set @audio.file.name@ to the desired output path.
 newFileRenderer :: Synth -> IO FileRenderer
-newFileRenderer (Synth _ _ synth) = do
+newFileRenderer (Synth _ _ _ synth synthRef) = do
+    retainRef synthRef
     ptr <- withForeignPtr synth c'new_fluid_file_renderer
-    -- Use newForeignPtr_ (no finalizer) because the finalization order
-    -- relative to the synth's ForeignPtr is unpredictable with GC.
-    -- Callers should use `deleteFileRenderer` to explicitly free the
-    -- renderer before the synth goes out of scope.
+    -- Use newForeignPtr_ (no finalizer) because callers explicitly destroy the
+    -- renderer via `deleteFileRenderer` before the synth goes out of scope.
     fPtr <- newForeignPtr_ ptr
-    return $ FileRenderer synth fPtr
+    return $ FileRenderer synth synthRef fPtr
 
 -- | Explicitly delete a 'FileRenderer'.
 --
@@ -529,8 +629,8 @@ newFileRenderer (Synth _ _ synth) = do
 -- to ensure proper resource ordering. After calling this, the renderer
 -- must not be used again.
 deleteFileRenderer :: FileRenderer -> IO ()
-deleteFileRenderer (FileRenderer synth fPtr) = do
-    withForeignPtr fPtr $ \ptr -> c'delete_fluid_file_renderer ptr
+deleteFileRenderer (FileRenderer synth synthRef fPtr) = do
+    withForeignPtr fPtr c'delete_fluid_file_renderer `finally` releaseRef synthRef
     touchForeignPtr synth
 
 -- | Process one block of audio through the file renderer.
@@ -538,7 +638,7 @@ deleteFileRenderer (FileRenderer synth fPtr) = do
 -- Returns 'True' if more data is available ('FLUID_OK'),
 -- 'False' if rendering is complete or an error occurred ('FLUID_FAILED').
 fileRendererProcessBlock :: FileRenderer -> IO Bool
-fileRendererProcessBlock (FileRenderer _synth fPtr) = do
+fileRendererProcessBlock (FileRenderer _synth _synthRef fPtr) = do
     result <- withForeignPtr fPtr c'fluid_file_renderer_process_block
     return (result == 0)
 
@@ -549,7 +649,7 @@ fileRendererProcessBlock (FileRenderer _synth fPtr) = do
 -- rendering is complete.
 renderToWav :: Synth -> String -> FilePath -> IO ()
 renderToWav synth sfPath midiPath = do
-    let Synth settings _ _ = synth
+    let Synth settings _ _ _ _ = synth
     withForeignPtr settings $ \sptr ->
         withCAString "audio.file.name" $ \key ->
             withCAString midiPath $ \val -> do
@@ -566,30 +666,33 @@ renderToWav synth sfPath midiPath = do
             when more loop
     loop
 
--- | Render audio samples from the synth.
---
--- CollectWhilePlaying helper.
--- Renders in blocks and accumulates them into a list, then concatenates.
-collectWhilePlaying :: Synth -> Player -> Int -> IO (V.Vector Int16)
-collectWhilePlaying synth player blockSize = do
-    blocks <- go []
-    return $ V.concat blocks
+-- | Collect rendered audio blocks while the player is active.
+collectBlocksWhilePlaying :: (Int -> IO a) -> Player -> Int -> IO [a]
+collectBlocksWhilePlaying writeBlock player blockSize = go []
   where
     go acc = do
         status <- playerGetStatus player
         if status == PlayerDone
             then return (reverse acc)
             else do
-                block <- synthWriteS16 synth blockSize
+                block <- writeBlock blockSize
                 go (block : acc)
 
+-- | Render audio samples from the synth.
+--
+-- CollectWhilePlaying helper.
+-- Renders in blocks and accumulates them into a list, then concatenates.
+collectWhilePlaying :: Synth -> Player -> Int -> IO (V.Vector Int16)
+collectWhilePlaying synth player blockSize =
+    V.concat <$> collectBlocksWhilePlaying (synthWriteS16 synth) player blockSize
+
 synthProgramChange :: Synth -> Channel -> Program -> IO ()
-synthProgramChange (Synth _ _ synth) c p =
+synthProgramChange (Synth _ _ _ synth _) c p =
     void $ withForeignPtr synth $ \ptr ->
         c'fluid_synth_program_change ptr (fromIntegral c) (fromIntegral p)
 
 synthBankSelect :: Synth -> Channel -> Int -> IO ()
-synthBankSelect (Synth _ _ synth) c b =
+synthBankSelect (Synth _ _ _ synth _) c b =
     void $ withForeignPtr synth $ \ptr ->
         c'fluid_synth_bank_select ptr (fromIntegral c) (fromIntegral b)
 
@@ -597,7 +700,7 @@ synthBankSelect (Synth _ _ synth) c b =
 -- presets are subsequently found at @bank + offset@.
 -- Throws 'IOException' if no SoundFont with the given ID is loaded.
 synthSetBankOffset :: Synth -> SoundFontId -> Int -> IO ()
-synthSetBankOffset (Synth _ _ synth) (SoundFontId sfontId) offset =
+synthSetBankOffset (Synth _ _ _ synth _) (SoundFontId sfontId) offset =
     withForeignPtr synth $ \ptr -> do
         ret <- c'fluid_synth_set_bank_offset ptr (fromIntegral sfontId)
                      (fromIntegral offset)
@@ -608,14 +711,14 @@ synthSetBankOffset (Synth _ _ synth) (SoundFontId sfontId) offset =
 
 -- | Get the bank offset previously set with 'synthSetBankOffset' (default 0).
 synthGetBankOffset :: Synth -> SoundFontId -> IO Int
-synthGetBankOffset (Synth _ _ synth) (SoundFontId sfontId) =
+synthGetBankOffset (Synth _ _ _ synth _) (SoundFontId sfontId) =
     withForeignPtr synth $ \ptr ->
         fromIntegral <$> c'fluid_synth_get_bank_offset ptr (fromIntegral sfontId)
 
 -- | Select a program for a channel from a specific SoundFont, bank, and
 -- program number. Throws 'IOException' if the selection fails.
 synthProgramSelect :: Synth -> Channel -> SoundFontId -> Int -> Int -> IO ()
-synthProgramSelect (Synth _ _ synth) (Channel c) (SoundFontId sfontId) bank prog =
+synthProgramSelect (Synth _ _ _ synth _) (Channel c) (SoundFontId sfontId) bank prog =
     withForeignPtr synth $ \ptr -> do
         ret <- c'fluid_synth_program_select ptr (fromIntegral c)
                      (fromIntegral sfontId) (fromIntegral bank) (fromIntegral prog)
@@ -626,7 +729,7 @@ synthProgramSelect (Synth _ _ synth) (Channel c) (SoundFontId sfontId) bank prog
 
 -- | Reset the synth to its default state (all controllers reset, notes off).
 synthSystemReset :: Synth -> IO ()
-synthSystemReset (Synth _ _ synth) =
+synthSystemReset (Synth _ _ _ synth _) =
     void $ withForeignPtr synth $ \ptr ->
         c'fluid_synth_system_reset ptr
 
@@ -638,7 +741,7 @@ synthSystemReset (Synth _ _ synth) =
 -- rather than duplicated.
 loadSoundFont :: Synth -> FilePath -> IO SoundFontId
 loadSoundFont synth path = do
-    Synth _ sfmap _ <- loadSF synth path
+    Synth _ _ sfmap _ _ <- loadSF synth path
     abspath <- canonicalizePath path
     case M.lookup abspath sfmap of
         Just sfid -> return (SoundFontId (fromIntegral sfid))

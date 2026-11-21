@@ -159,6 +159,22 @@ test-suite RenderMidi
                                  , ScopedTypeVariables
   default-language:    Haskell2010
 
+test-suite RenderMidiFloatSpec
+  type:                exitcode-stdio-1.0
+  main-is:             RenderMidiFloatSpec.hs
+  other-modules:       TestSoundFont
+  hs-source-dirs:      test
+  build-depends:       base >= 4.17 && < 5
+                     , directory >= 1.3 && < 1.4
+                     , fluidsynth
+                     , tasty
+                     , tasty-hunit
+                     , vector >= 0.12 && < 0.14
+  pkgconfig-depends:   fluidsynth
+  default-extensions:  ForeignFunctionInterface
+                                 , ScopedTypeVariables
+  default-language:    Haskell2010
+
 test-suite LoggingSpec
   type:                exitcode-stdio-1.0
   main-is:             LoggingSpec.hs
